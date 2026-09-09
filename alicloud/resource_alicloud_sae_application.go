@@ -861,7 +861,7 @@ func resourceAliCloudSaeApplicationCreate(d *schema.ResourceData, meta interface
 	request["AppName"] = StringPointer(d.Get("app_name").(string))
 	request["PackageType"] = StringPointer(d.Get("package_type").(string))
 	request["Replicas"] = StringPointer(strconv.Itoa(d.Get("replicas").(int)))
-	request["PackageVersion"] = StringPointer(strconv.FormatInt(time.Now().Unix(), 10))
+	request["PackageVersion"] = StringPointer(saeDeployFreshPackageVersion())
 
 	if v, ok := d.GetOk("namespace_id"); ok {
 		request["NamespaceId"] = StringPointer(v.(string))
@@ -2202,6 +2202,22 @@ func resourceAliCloudSaeApplicationRead(d *schema.ResourceData, meta interface{}
 	return nil
 }
 
+// saeDeployFreshPackageVersion returns the PackageVersion every
+// DeployApplication request must carry. SAE deduplicates deployments by this
+// value: resubmitting a previously seen one makes the server judge the
+// deploy as already applied and no-op it (2026-09-10 incident: the update
+// path forwarded the state value — the creation-time timestamp read back
+// from SAE — so a terraform-created application's image change was swallowed;
+// the change order "succeeded" within seconds while nothing rolled).
+// Always fresh, mirroring the create path; a configured package_version is
+// ignored exactly as on create. The recovery digest covers the full request,
+// so a fresh value simply yields a fresh digest per attempt and can never
+// spuriously match a stale pending record. Kept as a function seam so the
+// update-path payload is regression-testable.
+func saeDeployFreshPackageVersion() string {
+	return strconv.FormatInt(time.Now().Unix(), 10)
+}
+
 func resourceAliCloudSaeApplicationUpdate(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*connectivity.AliyunClient)
 	saeService := SaeService{client}
@@ -2236,9 +2252,8 @@ func resourceAliCloudSaeApplicationUpdate(d *schema.ResourceData, meta interface
 	if d.HasChange("package_version") {
 		update = true
 	}
-	if v, ok := d.GetOk("package_version"); ok {
-		deployApplicationReq["PackageVersion"] = StringPointer(v.(string))
-	}
+	// Never forward the state value here: see saeDeployFreshPackageVersion.
+	deployApplicationReq["PackageVersion"] = StringPointer(saeDeployFreshPackageVersion())
 
 	if !d.IsNewResource() && d.HasChange("package_url") {
 		update = true
