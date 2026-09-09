@@ -115,6 +115,11 @@ func resourceAliCloudSaeApplication() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
+			"pending_change_order": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+
 			"deploy": {
 				Type:     schema.TypeBool,
 				Optional: true,
@@ -2187,6 +2192,13 @@ func resourceAliCloudSaeApplicationRead(d *schema.ResourceData, meta interface{}
 
 	d.Set("status", describeApplicationStatusObject["CurrentStatus"])
 
+	// Fail closed while a previous deploy outcome is unknown or still
+	// running: refresh must never mask an ambiguous DeployApplication call
+	// as converged. See sae_application_deploy_recovery.go.
+	if err := saeDeployRecoveryReadGate(d, client); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -3111,29 +3123,14 @@ func resourceAliCloudSaeApplicationUpdate(d *schema.ResourceData, meta interface
 	}
 
 	if update {
-		action := "/pop/v1/sam/app/deployApplication"
-		wait := incrementalWait(3*time.Second, 3*time.Second)
-		err = resource.Retry(client.GetRetryTimeout(d.Timeout(schema.TimeoutUpdate)), func() *resource.RetryError {
-			response, err = client.RoaPost("sae", "2019-05-06", action, deployApplicationReq, nil, nil, false)
-			if err != nil {
-				if IsExpectedErrors(err, []string{"Application.InvalidStatus", "Application.ChangerOrderRunning"}) || NeedRetry(err) {
-					wait()
-					return resource.RetryableError(err)
-				}
-				return resource.NonRetryableError(err)
-			}
-			return nil
-		})
-		addDebug(action, response, deployApplicationReq)
-
-		if err != nil {
-			return WrapErrorf(err, DefaultErrorMsg, d.Id(), "POST "+action, AlibabaCloudSdkGoERROR)
-		}
-		responseData := response["Data"].(map[string]interface{})
-
-		stateConf := BuildStateConf([]string{}, []string{"2", "8", "11", "12"}, d.Timeout(schema.TimeoutUpdate), 3*time.Second, saeService.SaeApplicationChangeOrderStateRefreshFunc(fmt.Sprint(responseData["ChangeOrderId"]), []string{}))
-		if _, err := stateConf.WaitForState(); err != nil {
-			return WrapErrorf(err, IdMsg, d.Id())
+		// Recovery-aware submission: the POST is dispatched exactly once;
+		// ambiguous outcomes (transport error, 5xx, gateway timeout,
+		// cancellation) are never blindly resubmitted. A durable recovery
+		// record (fsync'd local journal + the pending_change_order state
+		// attribute) lets this and later invocations reconcile the change
+		// order before any new submission.
+		if err := saeDeployApplicationWithRecovery(d, client, deployApplicationReq); err != nil {
+			return err
 		}
 
 		d.SetPartial("replicas")
