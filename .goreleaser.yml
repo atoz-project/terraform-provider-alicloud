@@ -1,3 +1,4 @@
+version: 2
 # Visit https://goreleaser.com for documentation on how to customize this
 # behavior.
 before:
@@ -34,9 +35,9 @@ builds:
         goos: windows
     binary: '{{ .ProjectName }}_v{{ .Version }}'
 archives:
-  - files:
+  - formats: ["zip"]
+    files:
       - none*
-    format: zip
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
 checksum:
   name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
