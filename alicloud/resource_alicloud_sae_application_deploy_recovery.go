@@ -934,6 +934,27 @@ func (ctx *saeDeployRecoveryContext) execute(d *schema.ResourceData, req map[str
 		userDesc = *v
 	}
 	req["ChangeOrderDesc"] = StringPointer(composeSaeDeployChangeOrderDesc(rec.Digest, rec.Token, userDesc))
+	// Redacted payload log: observability for the real submit (an ops
+	// incident showed a for_each instance rolling the OLD image; without
+	// this line the actual payload is unobservable). Only safe fields are
+	// printed; Envs/secrets and the correlation desc are excluded.
+	{
+		keys := make([]string, 0, len(req))
+		for k := range req {
+			if k != "ChangeOrderDesc" && k != "Envs" && k != "OssAkSecret" {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		imageUrl, replicas := "<absent>", "<absent>"
+		if v, ok := req["ImageUrl"]; ok && v != nil {
+			imageUrl = *v
+		}
+		if v, ok := req["Replicas"]; ok && v != nil {
+			replicas = *v
+		}
+		log.Printf("[INFO] SAE DeployApplication submit: AppId=%s ImageUrl=%s Replicas=%s payloadKeys=%v", appId, imageUrl, replicas, keys)
+	}
 
 	response, ambiguousErr, err := ctx.submitOnce(req)
 	if err != nil {
