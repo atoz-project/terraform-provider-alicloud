@@ -6,6 +6,7 @@ on:
       - alicloud/*.go
     branches:
       - master
+      - custom-aigw
 
 jobs:
   BreakingChange:

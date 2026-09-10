@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - master
+      - custom-aigw
   pull_request:
     pull_request_target:
       types:
